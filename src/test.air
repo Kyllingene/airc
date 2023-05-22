@@ -1,4 +1,21 @@
-push 5
+; add junk
+push 10
+push 11
+push 12
 push 13
-mul
+
+tag 255
+set 65
+
+raw ;
+
+; add junk
+push 14
+push 15
+
+; retrieve tagged
+ctg 255
+
+raw ;
+
 out
