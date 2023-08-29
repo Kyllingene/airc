@@ -1,11 +1,11 @@
 # Air
 ## A stack-based assembly-like language
 
-- Two byte-based stacks
+- 4-byte-width stack
 - Designed to work well with brain*
     - Tape is the stack
     - Compiles to brain*
-- One byte per cell (due to brain*)
+- One byte of storage per cell (due to brain*)
 
 Code examples:
 ```

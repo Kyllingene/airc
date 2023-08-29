@@ -1,0 +1,19 @@
+Usage:
+airc [input_file...] [options]
+
+Compile one or more air input files into brain*.
+If multiple input files are specified, and only
+one output file, all files will be compiled into
+the same output file. If multiple output files
+are specified, there must be exactly as many as
+there are input files, and they will be outputted
+into their positionally respective files. If `-s`
+is specified, prints all output to stdout. Else,
+creates a new file for each input file and names
+it the same, except with the `.bf` extension.
+
+Options:
+    -h | --help   : Show this help prompt.
+    -o | --output : Specifify an output file. You
+                    may specifiy more than one by
+                    separating them with commas.

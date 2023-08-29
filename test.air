@@ -1,0 +1,5 @@
+push 1
+eq 2
+ifn
+    print "They're neq\n"
+endif
