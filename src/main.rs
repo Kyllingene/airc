@@ -13,30 +13,87 @@ use sarge::prelude::*;
 
 type CompResult<T> = Result<T, CompError>;
 
-macro_rules! s {
-    () => {
-        String::new()
-    };
-
+macro_rules! ss {
     ($s:expr) => {
         String::from($s)
     };
+
+    () => {
+        String::new()
+    };
 }
 
-macro_rules! f {
-    ($($s:expr),*) => {
-        format!(
-            $(
-                $s,
-            )*
+macro_rules! guard {
+    ( $($x:expr),+ $(,)? ) => {
+        guard_this!(
+            ">[-]+<<<<<<[>>>>>{}<<<<<[->>+<<]][-]>>[-<<+>>]>>>",
+
+            format!(
+                $(
+                    $x,
+                )*
+            )
         )
     };
+}
 
-    ($($s:expr),*,) => {
+macro_rules! guard_back {
+    ( $n:expr => $($x:expr),+ $(,)? ) => {
+        guard_this!(
+            "{0}>[-]<<[{1}>{2}{0}>[-]+<<[-]]>>[-<<+>>]<{1}",
+            "<<<<".repeat($n.into()),
+            ">>>>".repeat($n.into()),
+
+            format!(
+                $(
+                    $x,
+                )*
+            )
+        )
+    };
+}
+
+macro_rules! guard_n {
+    ( $n:expr => $($x:expr),+ $(,)? ) => {
+        guard_this!(
+            "<->{0}>[-]<<[{1}>{2}{0}>[-]+<<[-]]>>[-<<+>>]<{1}<+>",
+            goto($n.into()),
+            goback(),
+
+            format!(
+                $(
+                    $x,
+                )*
+            )
+        )
+    };
+}
+
+macro_rules! guard_tag {
+    ( $n:expr => $($x:expr),+ $(,)? ) => {
+        guard_this!(
+            "<->{0}>[-]<<[{1}>{2}{0}>[-]+<<[-]]>>[-<<+>>]<{1}<+>",
+            goto_tag($n.into()),
+            goback(),
+
+            format!(
+                $(
+                    $x,
+                )*
+            )
+        )
+    };
+}
+
+macro_rules! guard_this {
+    ( $($x:expr),+ $(,)? ) => {
         format!(
-            $(
-                $s,
-            )*
+            ">[-]<<[>{}>[-]+<<[-]][-]>>[-<<+>>]<",
+            format!(
+                $(
+                    $x,
+                )*
+            )
         )
     };
 }
@@ -46,6 +103,7 @@ enum CompError {
     InvalidOp(usize, String),
     InvalidChar(usize, String),
     InvalidString(usize, String),
+    InvalidArgument(usize, String),
     RequiresArg(usize, String),
     UnbalancedIfs,
     UnbalancedLoops,
@@ -57,6 +115,7 @@ impl Display for CompError {
             CompError::InvalidOp(i, op) => write!(f, "Invalid op on line {i}: `{op}`"),
             CompError::InvalidChar(i, ch) => write!(f, "Invalid character on line {i}: `{ch}`"),
             CompError::InvalidString(i, ch) => write!(f, "Invalid string on line {i}: `{ch}`"),
+            CompError::InvalidArgument(i, ch) => write!(f, "Invalid argument on line {i}: `{ch}`"),
             CompError::RequiresArg(i, op) => {
                 write!(f, "Operator `{op}` on line {i} requires an argument")
             }
@@ -68,20 +127,23 @@ impl Display for CompError {
 
 impl Error for CompError {}
 
+#[inline]
 fn goto(n: usize) -> String {
     format!("<<<<<[<<<<]>{}", ">".repeat(n * 4))
 }
 
-fn gotoi(i: u8) -> String {
-    f!(
+#[inline]
+fn goto_tag(i: u8) -> String {
+    format!(
         "<<<<<[<<<<]>>>>>>>{0}[{1}>>>>{0}]{1}<<",
         "-".repeat(i as usize),
         "+".repeat(i as usize)
     )
 }
 
+#[inline]
 fn goback() -> String {
-    s!("<[>>>>]>")
+    ss!("<[>>>>]>")
 }
 
 // fn find(i: u8) -> String {
@@ -165,6 +227,9 @@ enum Op {
     /// Pop and write into cell at tag.
     Mtg(u8),
 
+    /// Retrieve the tag of the top cell and push it.
+    Ptg,
+
     /// Run code between here and endif if top != 0.
     If,
 
@@ -197,87 +262,94 @@ enum Op {
 
 impl Display for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
+        let data = match self {
             Op::Add(arg) => if let Some(arg) = arg {
                 "+".repeat(*arg as usize)
             } else {
-                s!("[-<<<<+>>>>]<-<<<")
+                guard!("[-<<<<+>>>>]<-<<<")
             }
             Op::Sub(arg) => if let Some(arg) = arg {
                 "-".repeat(*arg as usize)
             } else {
-                s!("[-<<<<->>>>]<-<<<")
+                guard!("[-<<<<->>>>]<-<<<")
             }
-            Op::Mul(arg) => f!(
+            Op::Mul(arg) => guard!(
                 "{}>[-]<<<<[-]<[>>>>>+<<<<<-]>>>>>[<[<<<<+>+>>>-]<<<[>>>+<<<-]>>>>-]<[-]<-<<<",
                 match arg {
                     Some(arg) => Op::Push(*arg).to_string(),
-                    None => s!(),
+                    None => ss!(),
                 }
             ),
-            Op::Div(arg) => f!("{}>[-]<<-<<[-]<<->[>+<-]>[>>>[<<<<<+>>>>>>+<-]>[<+>-]<<<<<<[>>>>>>+<<<<-[>>>>[-]<<+<<-]>>[<<+>>-]>>[<<<<<<-[>-<[-]]+>>>>>>-]<<<<<<-]>+>]<<[-]+>>>>[-]>[-]<<<<",
+            Op::Div(arg) => guard!("{}>[-]<<-<<[-]<<->[>+<-]>[>>>[<<<<<+>>>>>>+<-]>[<+>-]<<<<<<[>>>>>>+<<<<-[>>>>[-]<<+<<-]>>[<<+>>-]>>[<<<<<<-[>-<[-]]+>>>>>>-]<<<<<<-]>+>]<<[-]+>>>>[-]>[-]<<<<",
                 match arg {
                     Some(arg) => Op::Push(*arg).to_string(),
-                    None => s!(),
+                    None => ss!(),
                 }
             ),
-            Op::Eq(arg) => f!("{}<<<<[->>>>-<<<<]+>>>>[<<<<->>>>[-]]<-<<<", match arg {
+            Op::Eq(arg) => guard!("{}<<<<[->>>>-<<<<]+>>>>[<<<<->>>>[-]]<-<<<", match arg {
                 Some(arg) => Op::Push(*arg).to_string(),
-                None => s!(),
+                None => ss!(),
             }),
-            Op::Neq(arg) => f!(
+            Op::Neq(arg) => guard!(
                 "{}<<<[-]>>>>[-]<<<<<[>>>>>+<<<<<-]>>>>[>-<<<<+>>>-]<<<[>>>+<<<-]>>>>[<<<<<+>>>>>[-]]<<-<<<",
                 match arg {
                     Some(arg) => Op::Push(*arg).to_string(),
-                    None => s!(),
+                    None => ss!(),
                 }
             ),
-            Op::Not(arg) => f!(
-                "\n{}>[-]<-[>-<-]>[<+>-]<\n",
+            Op::Not(arg) => guard_this!(
+                "{}>[-]<-[>-<-]>[<+>-]<",
                 match arg {
                     Some(arg) => Op::Push(*arg).to_string(),
-                    None => s!(),
+                    None => ss!(),
                 }
             ),
-            Op::And(arg) => f!(
+            Op::And(arg) => guard!(
                 "{}>[-]<<<<<[>>>>[>+<-]<<<<-]>>>>[-]>[-<<<<<+>>>>>]<<-<<<",
                 match arg {
                     Some(arg) => Op::Push(*arg).to_string(),
-                    None => s!(),
+                    None => ss!(),
                 }
             ),
-            Op::Push(arg) => s!(">>>+>[-]") + &Op::Set(*arg).to_string(),
-            Op::Set(arg) => s!("[-]") + &"+".repeat(*arg as usize),
-            Op::Pop(arg) => "[-]<-<<<".repeat(*arg as usize),
-            Op::Dup(arg) => ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize),
-            Op::Swp => s!(">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
-            Op::Rot => format!("<<<<{}>>>>{}", Op::Swp, Op::Swp),
-            Op::Swpb(i) => f!(
-                "{}<[-]{1}[-{2}+{1}]>{2}[-<{1}+>{2}]<",
-                Op::Dup(1),
-                "<".repeat(*i),
-                ">".repeat(*i)
+            Op::Push(arg) => ss!(">>>+>") + &Op::Set(*arg).to_string(),
+            Op::Set(arg) => ss!("[-]") + &"+".repeat(*arg as usize),
+            Op::Pop(arg) => guard_this!("{}", "[-]<-<<<".repeat(*arg as usize)),
+            Op::Dup(arg) => guard_this!("{}", ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize)),
+            Op::Swp => guard_back!(1usize => ">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
+            Op::Rot => guard_back!(2usize => "<<<<{}>>>>{}", Op::Swp, Op::Swp),
+            Op::Swpb(i) => guard_back!(
+                *i =>
+                "[->+<]{0}[-{1}+{0}]{1}>[-{0}<+{1}>]<",
+                "<".repeat(i * 4),
+                ">".repeat(i * 4),
             ),
-            Op::Swpn(n) =>
-                f!("<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>", goto(*n), goback()),
-            Op::Tag(i) => if let Some(i) = i { f!(">>{}<<", Op::Set(*i)) } else { f!("[->+>+<<]>[-<+>]<") }
-            Op::Ctg(i) => f!("<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>", gotoi(*i), goback()),
-            Op::Mtg(i) => f!("{0}[-]{1}[-{0}+{1}]<-<<<", gotoi(*i), goback()),
-            Op::If => s!("["),
+            Op::Swpn(n) => guard_n!(
+                *n =>
+                "<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>",
+                goto(*n),
+                goback()
+            ),
+            Op::Tag(i) => guard_this!("{}", if let Some(i) = i { format!(">>{}<<", Op::Set(*i)) } else { ss!("[->+>+<<]>[-<+>]<") }),
+            Op::Ctg(i) => guard_tag!(*i => "<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>", goto_tag(*i), goback()),
+            Op::Mtg(i) => guard_tag!(*i => "{0}[-]{1}[-{0}+{1}]<-<<<", goto_tag(*i), goback()),
+            Op::Ptg => guard_this!(">>[->>>+>+<<<<]>>>"),
+            Op::If => ss!(">[-]<["),
             Op::Ifn => Op::Not(None).to_string() + &Op::If.to_string(),
-            Op::Endif => s!(">[-]]<"),
-            Op::Loop => s!("["),
-            Op::End => s!("]"),
+            Op::Endif => ss!(">[-]<[->+<]]>[-<+>]<"),
+            Op::Loop => ss!("["),
+            Op::End => ss!("]"),
             Op::Out(arg) => match arg {
-                    Some(arg) => f!(">[-]{}.<", "+".repeat(*arg as usize)),
-                    None => s!(".[-]<-<<<"),
+                    Some(arg) => format!(">[-]{}.<", "+".repeat(*arg as usize)),
+                    None => guard_this!(".[-]<-<<<"),
                 }
-            Op::In => s!(">>>+>[-],"),
+            Op::In => ss!(">>>+>[-],"),
             Op::Raw(code) => code.clone(),
             Op::Macro(ops) => ops.iter()
                     .flat_map(|op| op.to_string().chars().collect::<Vec<char>>())
                     .collect(),
-        })
+        };
+
+        write!(f, "{data}")
     }
 }
 
@@ -300,7 +372,7 @@ impl Compiler {
             return Err(CompError::UnbalancedIfs);
         }
 
-        let mut data = s!(">");
+        let mut data = ss!(">");
         for tok in tokens {
             data.push_str(&tok.to_string());
         }
@@ -371,7 +443,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "sub" => toks.push(Op::Sub(if arg.is_empty() {
@@ -379,7 +451,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "mul" => toks.push(Op::Mul(if arg.is_empty() {
@@ -387,7 +459,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "div" => toks.push(Op::Div(if arg.is_empty() {
@@ -395,7 +467,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "eq" => toks.push(Op::Eq(if arg.is_empty() {
@@ -403,7 +475,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "neq" => toks.push(Op::Neq(if arg.is_empty() {
@@ -411,7 +483,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "not" => toks.push(Op::Not(if arg.is_empty() {
@@ -419,7 +491,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "and" => toks.push(Op::And(if arg.is_empty() {
@@ -427,54 +499,55 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "push" => toks.push(Op::Push(
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )),
                 "set" => toks.push(Op::Set(
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )),
                 "pop" => toks.push(Op::Pop(if arg.is_empty() {
                     1
                 } else {
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?
                 })),
                 "dup" => toks.push(Op::Dup(if arg.is_empty() {
                     1
                 } else {
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?
                 })),
                 "swp" => toks.push(Op::Swp),
                 "swpb" => toks.push(Op::Swpb(
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )),
                 "swpn" => toks.push(Op::Swpn(
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )),
                 "tag" => toks.push(Op::Tag(if arg.is_empty() {
                     None
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "ctg" => toks.push(Op::Ctg(
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )),
                 "mtg" => toks.push(Op::Mtg(
                     arg.parse()
-                        .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )),
+                "ptg" => toks.push(Op::Ptg),
                 "rot" => toks.push(Op::Rot),
                 "if" | "{" => toks.push(Op::If),
                 "ifn" | "!{" => toks.push(Op::Ifn),
@@ -486,7 +559,7 @@ impl Compiler {
                 } else {
                     Some(
                         arg.parse()
-                            .map_err(|_| CompError::RequiresArg(i, op.to_owned()))?,
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                     )
                 })),
                 "in" => toks.push(Op::In),
@@ -515,8 +588,10 @@ impl Compiler {
     }
 }
 
-fn print_err(msg: impl Display, e: impl Display) {
+fn print_err(msg: impl Display, e: impl Display) -> ! {
     eprintln!("{}[38;5;1m{msg}: {e}{0}[0m", 27 as char);
+    eprintln!("{}[38;5;1maborted due to error{0}[0m", 27 as char);
+    exit(1);
 }
 
 fn print_warn(msg: impl Display) {
@@ -541,7 +616,6 @@ fn main() {
         Ok(i) => i,
         Err(e) => {
             print_err("failed to parse arguments: ", e);
-            exit(1);
         }
     };
 
@@ -556,11 +630,9 @@ fn main() {
             "invalid options",
             "you may only specifiy one of --output or --stdout",
         );
-        exit(1);
     }
 
     if input.is_empty() {
-        print_err("invalid arguments", "no input files given");
         print_help();
         exit(1);
     }
@@ -592,7 +664,6 @@ fn main() {
                 "invalid arguments",
                 "must have equal amounts of input and output files, or 1 output file",
             );
-            exit(1);
         }
     }
 
@@ -602,7 +673,6 @@ fn main() {
             Ok(c) => c,
             Err(e) => {
                 print_err(format!("failed to read file {file}"), e);
-                exit(1);
             }
         };
 
@@ -611,7 +681,6 @@ fn main() {
             Ok(c) => c,
             Err(e) => {
                 print_err(format!("failed to compile file {file}"), e);
-                exit(1);
             }
         });
     }
@@ -623,14 +692,12 @@ fn main() {
                 Ok(f) => f,
                 Err(e) => {
                     print_err("failed to open output file", e);
-                    exit(1);
                 }
             };
 
             for output in compiled {
                 if let Err(e) = file.write_all(output.as_bytes()) {
                     print_err("failed to write to file", e);
-                    exit(1);
                 }
             }
         } else {
@@ -640,13 +707,11 @@ fn main() {
                     Ok(f) => f,
                     Err(e) => {
                         print_err("failed to open output file", e);
-                        exit(1);
                     }
                 };
 
                 if let Err(e) = file.write_all(compiled[i].as_bytes()) {
                     print_err("failed to write to file", e);
-                    exit(1);
                 }
 
                 print_good(format!("wrote {filename}"));

@@ -7,6 +7,8 @@
     - Compiles to brain*
 - One byte of storage per cell (due to brain*)
 
+Basic syntax highlighting for VS Code can be found at [`Kyllingene/vscode-airc`](https://github.com/Kyllingene/vscode-airc).
+
 Code examples:
 ```
 push 5 ; stack = [5]
