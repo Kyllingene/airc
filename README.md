@@ -1,7 +1,7 @@
 # Air
 ## A stack-based assembly-like language
 
-- 4-byte-width stack
+- Four-byte-cell stack
 - Designed to work well with brain*
     - Tape is the stack
     - Compiles to brain*
@@ -10,7 +10,7 @@
 Basic syntax highlighting for VS Code can be found at [`Kyllingene/vscode-airc`](https://github.com/Kyllingene/vscode-airc).
 
 Code examples:
-```
+```air
 push 5 ; stack = [5]
 push 6 ; stack = [5, 6]
 swp    ; stack = [6, 5]
@@ -18,48 +18,23 @@ add    ; stack = [11]
 dup    ; stack = [11, 11]
 mul    ; stack = [121]
 dup    ; stack = [121, 121]
-out    ; stack = [121], prints "y"
+pout   ; stack = [121], prints "y"
 inc    ; stack = [122]
-out    ; stack = [], prints "z"
+pout   ; stack = [], prints "z"
 ```
 
-```
-; print A-Z plus a newline
+```air
+push 'A'     ; stack = [65 ('A')]
 
-push 64 ; start
-push 26 ; i
-
-loop
-
-; stack = [start, i]
-swp
-
-; stack = [i, start]
 push 1
+loop         ; pops top value (condition)
+    out      ; stack = [65]; doesn't pop top value
+    add 1    ; stack = [66]
 
-; stack = [i, start, 1]
-add
+    dup      ; stack = [66, 66]
+    neq 'Z'  ; stack = [66, 1]
+end ; pops top value (condition)
 
-; stack = [i, start++]
-dup
-
-; stack = [i, start, start]
-out
-
-; stack = [i, start]
-swp
-
-; stack = [start, i]
-push 1
-
-; stack = [start, i, 1]
-sub
-
-; stack = [start, i--]
-end
-
-; stack = [start=91, i=0]
-; print newline
-push 10
-out
+pout     ; stack = [], prints "Z"
+out '\n' ; prints literal, no effect on stack
 ```
