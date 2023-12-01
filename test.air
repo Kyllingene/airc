@@ -1,13 +1,24 @@
-push '1'
+;; consumes and prints a string
+def print
+    dup         ; str... len len
+    loop        ; str... len
+        swp     ; str... len chr
+        pout    ; str... len
+        sub 1   ; str... len
+        dup     ; str... len len
+    end         ; str... len
+    pop         ; <empty>
+endef
 
-push 1
-loop
-    out
-    add 1
+; pushes a string, with its length;
+; this pushes "\nraboof" 7
+str "foobar\n"
+print
 
-    dup
-    neq 'Z'
-end
+; if you want a null-terminated string, use cstr:
+; this pushes 0 "\nraboof"
+;cstr "foobar\n"
 
-pout
-out '\n'
+; the string is gone, you can't print anything else
+print
+

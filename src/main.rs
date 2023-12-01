@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
+use std::path::Path;
 use std::fs::{read_to_string, File};
 use std::io::{Read, Write};
 use std::process::exit;
@@ -696,9 +697,15 @@ fn main() {
         exit(1);
     }
 
+    let default_name = if input.len() == 1 {
+        Path::new(&input[0]).with_extension("bf").display().to_string()
+    } else {
+        "out.bf".to_string()
+    };
+
     let output_files = args.output
         .map(|v| v.split(',').map(String::from).collect::<Vec<_>>())
-        .unwrap_or_else(|| vec!["out.bf".to_string()]);
+        .unwrap_or_else(|| vec![default_name]);
 
     if output_files.len() != input.len() && output_files.len() != 1 {
         print_err(

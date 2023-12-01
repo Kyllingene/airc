@@ -8,9 +8,10 @@ the same output file. If multiple output files
 are specified, there must be exactly as many as
 there are input files, and they will be outputted
 into their positionally respective files. If `-s`
-is specified, prints all output to stdout. Else,
-creates a new file for each input file and names
-it the same, except with the `.bf` extension.
+is specified, prints all output to stdout. If
+none of the above, creates a new file for each
+input file and names it the same, except with the
+`.bf` extension.
 
 Options:
     -h | --help   : Show this help prompt.
