@@ -1,0 +1,6 @@
+push 0 ; length
+
+push 1
+loop
+    push 0
+end

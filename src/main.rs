@@ -1,17 +1,16 @@
 // TODO: support more kinds of brain* interpreters
-
-use std::{
-    error::Error,
-    fmt::Display,
-    fs::{read_to_string, File},
-    io::Write,
-    path::Path,
-    process::exit,
-};
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt::Display;
+use std::fs::{read_to_string, File};
+use std::io::Write;
+use std::path::Path;
+use std::process::exit;
 
 use sarge::prelude::*;
 
-mod pact;
+// TODO: implement pact
+// mod pact;
 
 type CompResult<T> = Result<T, CompError>;
 
@@ -31,6 +30,7 @@ enum CompError {
     InvalidChar(usize, String),
     InvalidString(usize, String),
     InvalidArgument(usize, String),
+    InvalidMacro(usize, String),
     RequiresArg(usize, String),
     UnbalancedIfs,
     UnbalancedLoops,
@@ -46,6 +46,7 @@ impl Display for CompError {
             CompError::RequiresArg(i, op) => {
                 write!(f, "Operator `{op}` on line {i} requires an argument")
             }
+            CompError::InvalidMacro(i, name) => write!(f, "Invalid macro name on line {i}: `{name}`"),
             CompError::UnbalancedIfs => write!(f, "Unequal numbers of `if` and `endif`"),
             CompError::UnbalancedLoops => write!(f, "Unequal numbers of `loop` and `end`"),
         }
@@ -266,10 +267,10 @@ impl Display for Op {
                     None => ss!(),
                 }
             ),
-            Op::Push(arg) => format!(">>>+>") + &Op::Set(*arg).to_string(),
-            Op::Set(arg) => format!("[-]") + &"+".repeat(*arg as usize),
-            Op::Pop(arg) => format!("{}", "[-]<-<<<".repeat(*arg as usize)),
-            Op::Dup(arg) => format!("{}", ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize)),
+            Op::Push(arg) => ss!(">>>+>") + &Op::Set(*arg).to_string(),
+            Op::Set(arg) => ss!("[-]") + &"+".repeat(*arg as usize),
+            Op::Pop(arg) => "[-]<-<<<".repeat(*arg as usize),
+            Op::Dup(arg) => ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize),
             Op::Swp => ss!(">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
             Op::Rot => format!("<<<<{}>>>>{}", Op::Swp, Op::Swp),
             Op::Swpb(i) => format!(
@@ -282,7 +283,7 @@ impl Display for Op {
                 goto(*n),
                 goback()
             ),
-            Op::Tag(i) => format!("{}", if let Some(i) = i { format!(">>{}<<", Op::Set(*i)) } else { ss!("[->+>+<<]>[-<+>]<") }),
+            Op::Tag(i) => if let Some(i) = i { format!(">>{}<<", Op::Set(*i)) } else { ss!("[->+>+<<]>[-<+>]<") },
             Op::Ctg(i) => format!("<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>", goto_tag(*i), goback()),
             Op::Mtg(i) => format!("{0}[-]{1}[-{0}+{1}]<-<<<", goto_tag(*i), goback()),
             Op::Ptg => ss!(">>[->>>+>+<<<<]>>>"),
@@ -302,7 +303,7 @@ impl Display for Op {
             Op::In => ss!(">>>+>[-],"),
             Op::Raw(code) => code.clone(),
             Op::Macro(ops) => ops.iter()
-                    .flat_map(|op| op.to_string().chars().collect::<Vec<char>>())
+                    .flat_map(|op| op.to_string().chars().collect::<Vec<_>>())
                     .collect(),
         };
 
@@ -310,9 +311,9 @@ impl Display for Op {
     }
 }
 
-fn compile(tokens: Vec<Op>) -> CompResult<String> {
-    if tokens.iter().filter(|op| matches!(op, Op::Loop)).count()
-        != tokens.iter().filter(|op| matches!(op, Op::End)).count()
+fn compile(tokens: &[Op]) -> CompResult<String> {
+    if tokens.iter().filter(|op| **op == Op::Loop).count()
+        != tokens.iter().filter(|op| **op == Op::End).count()
     {
         return Err(CompError::UnbalancedLoops);
     }
@@ -331,19 +332,19 @@ fn compile(tokens: Vec<Op>) -> CompResult<String> {
         data.push_str(&tok.to_string());
     }
 
-    while let Some(_) = data.find("<>") {
+    while data.contains("<>") {
         data = data.replace("<>", "");
     }
 
-    while let Some(_) = data.find("><") {
+    while data.contains("><") {
         data = data.replace("><", "");
     }
 
-    while let Some(_) = data.find("+-") {
+    while data.contains("+-") {
         data = data.replace("+-", "");
     }
 
-    while let Some(_) = data.find("-+") {
+    while data.contains("-+") {
         data = data.replace("-+", "");
     }
 
@@ -351,9 +352,16 @@ fn compile(tokens: Vec<Op>) -> CompResult<String> {
 }
 
 fn tokenize(code: &str) -> CompResult<String> {
-    let mut toks = Vec::new();
+    let mut program = Vec::new();
+
+    let mut macros = HashMap::new();
+    let mut mac = Vec::new();
+    let mut macro_name = None;
+
     for (i, line) in code.lines().enumerate() {
         let mut line = line.trim();
+
+        let toks = if macro_name.is_some() { &mut mac } else { &mut program };
 
         if line.starts_with(';') || line.is_empty() || line.chars().all(|ch| ch.is_whitespace()) {
             continue;
@@ -378,10 +386,8 @@ fn tokenize(code: &str) -> CompResult<String> {
                     if line.chars().nth(i).unwrap() == '\'' {
                         in_char = false;
                     }
-                } else {
-                    if line.chars().nth(i).unwrap() == '"' {
-                        in_str = false;
-                    }
+                } else if line.chars().nth(i).unwrap() == '"' {
+                    in_str = false;
                 }
             }
 
@@ -588,13 +594,30 @@ fn tokenize(code: &str) -> CompResult<String> {
                 toks.push(Op::Macro(ops));
             }
 
-            _ => {
-                return Err(CompError::InvalidOp(i, op.to_owned()));
+            "def" => {
+                let arg = arg.to_string();
+                if arg.is_empty() | arg.chars().all(char::is_whitespace) {
+                    return Err(CompError::InvalidMacro(i, arg));
+                }
+                macro_name = Some(arg);
+            }
+            "endef" => {
+                let name = macro_name.take().expect("Internal error: no name for macro");
+                let new = std::mem::take(&mut mac);
+                macros.insert(name, Op::Macro(new));
+            }
+
+            op => {
+                if let Some(body) = macros.get(op) {
+                    toks.push(body.clone());
+                } else {
+                    return Err(CompError::InvalidOp(i, op.to_owned()));
+                }
             }
         }
     }
 
-    compile(toks)
+    compile(&program)
 }
 
 fn print_err(msg: impl Display, e: impl Display) -> ! {

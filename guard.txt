@@ -1,0 +1,96 @@
+# checks back 1 cell, ends back 1 cell
+procedure guard(code) {
+	guard_this({
+		cell1.temp = 1
+		if cell0.used:
+			goto(1)
+			code()
+			goto cell[-1]
+			cell[-1].temp = cell[-1].used
+			cell[-1].used = 0
+			# end on cell[-1].used
+
+#		if code ran: ?=-1
+#	    	cell[-1].temp == x
+#		    cell[-1].used == 0 (should be x)
+#		else: ?=0
+#		 	cell0.temp == 1
+#		 	cell0.used == 1 (should be 1)
+
+		cell?.used = cell?.temp
+		goto(+1)
+	})
+}
+
+# checks cell.used, ends on same cell
+procedure guard_this( code)
+	cell.temp = 0
+	if cell.used then
+		goto cell
+		code()
+		cell.temp = 1
+		cell.used = 0
+		# end on cell.used
+
+#	if code ran then
+#		cell.temp == 1
+#		cell.used == 0 (should be 1)
+#	else
+#		cell.temp == 0
+#		cell.used == 0 (should be 0)
+
+	cell.used = cell.temp
+
+# checks back n cells, ends on same cell
+procedure guard_back(n) {
+	guard_this({
+		goto(n)
+		celln.temp = 0
+		if celln.used then
+			goto cellc
+			run code
+			goto celln
+			celln.temp = 1
+			celln.used = 0
+			# end on celln.used
+
+#		if code ran:
+#			celln.temp == 1
+#			celln.used == 0 (should be 1)
+#		else:
+#			celln.temp == 0
+#			celln.used == 0 (should be 0)
+
+		celln.used = celln.temp
+
+		goto(c)
+	})
+}
+
+# checks cell[n], ends on same cell
+procedure guard_n(code) {
+	guard_this({
+		cellc.used = 0 (for returning)
+		goto celln
+		celln.temp = 0
+		if celln.used:
+			goto cellc
+			code()
+			goto celln
+			celln.temp = 1
+			celln.used = 0
+			end on celln.used
+
+		if code ran:
+			celln.temp == 1
+			celln.used == 0 (should be 1)
+		else:
+			celln.temp == 0
+			celln.used == 0 (should be 0)
+
+		celln.used = celln.temp
+
+		goto cellc
+		cellc.used = 1
+	})
+}
