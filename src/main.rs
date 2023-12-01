@@ -615,19 +615,6 @@ fn tokenize(code: &str) -> CompResult<String> {
             "in" => toks.push(Op::In),
             "raw" => toks.push(Op::Raw(arg.to_owned())),
 
-            "print" => {
-                if arg.is_empty() {
-                    return Err(CompError::RequiresArg(i, op.to_owned()));
-                }
-
-                let mut ops = Vec::new();
-                for ch in arg.as_bytes() {
-                    ops.push(Op::Out(Some(*ch)));
-                }
-
-                toks.push(Op::Macro(ops));
-            }
-
             "def" => {
                 let arg = arg.to_string();
                 if arg.is_empty() | arg.chars().all(char::is_whitespace) {
@@ -674,43 +661,44 @@ fn print_help() {
     print_warn(include_str!("../usage.txt"));
 }
 
-fn main() {
-    let mut parser = ArgumentParser::new();
-    parser.add(arg!(flag, both, 'h', "help"));
-    parser.add(arg!(str, both, 'o', "output"));
-    parser.add(arg!(flag, both, 's', "stdout"));
+sarge! {
+    Args,
 
-    let input = match parser.parse() {
+    'h' help: bool,
+    #ok 'o' output: String,
+    #ok 's' stdout: String,
+}
+
+fn main() {
+    let (args, mut input) = match Args::parse() {
         Ok(i) => i,
         Err(e) => {
             print_err("failed to parse arguments: ", e);
         }
     };
 
-    if get_flag!(parser, both, 'h', "help") {
+    if args.help {
         print_help();
         return;
     }
 
-    let stdout = get_flag!(parser, both, 's', "stdout");
-    if stdout && get_arg!(parser, both, 'o', "output").map_or(false, |a| a.val.is_some()) {
+    if args.stdout.is_some() && args.output.is_some() {
         print_err(
             "invalid options",
             "you may only specifiy one of --output or --stdout",
         );
     }
 
+    input.remove(0);
     if input.is_empty() {
         print_help();
         exit(1);
     }
 
-    let output_files = get_arg!(parser, both, 'o', "output").unwrap().clone();
-    let mut output_files = output_files
-        .val
-        .map(|v| v.get_str().split(',').map(String::from).collect::<Vec<_>>());
+    let mut output_files = args.output
+        .map(|v| v.split(',').map(String::from).collect::<Vec<_>>());
 
-    if !stdout && output_files.is_none() {
+    if args.stdout.is_none() && output_files.is_none() {
         output_files = Some(
             input
                 .iter()

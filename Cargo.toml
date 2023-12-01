@@ -1,9 +1,10 @@
 [package]
 name = "airc"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sarge = "3.0.1"
+sarge = "7.0"
+thiserror = "1.0.50"
