@@ -126,7 +126,7 @@ enum Op {
     Rot,
 
     /// Swap the top value and the Nth value backwards.
-    Swpb(usize),
+    Swpb(Option<usize>),
 
     /// Swap the top value and the Nth value.
     Swpn(usize),
@@ -273,11 +273,17 @@ impl Display for Op {
             Op::Dup(arg) => ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize),
             Op::Swp => ss!(">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
             Op::Rot => format!("<<<<{}>>>>{}", Op::Swp, Op::Swp),
-            Op::Swpb(i) => format!(
-                "[->+<]{0}[-{1}+{0}]{1}>[-{0}<+{1}>]<",
-                "<".repeat(i * 4),
-                ">".repeat(i * 4),
-            ),
+            Op::Swpb(i) => if let Some(i) = i {
+                    format!(
+                    "[->+<]{0}[-{1}+{0}]{1}>[-{0}<+{1}>]<",
+                    "<".repeat(i * 4),
+                    ">".repeat(i * 4),
+                )
+            } else {
+                ss!(
+                    "<->[->+<]>[-<<<<[-]>>>>[-<<<<+>>>>]<<<<]<<->[->+>>[>>>>]>+<<<<<[<<<<]>]>[-<+>]<<+>>>>[>>>>]+>"
+                )
+            },
             Op::Swpn(n) => format!(
                 "<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>",
                 goto(*n),
@@ -532,8 +538,14 @@ fn tokenize(code: &str) -> CompResult<String> {
             })),
             "swp" => toks.push(Op::Swp),
             "swpb" => toks.push(Op::Swpb(
-                arg.parse()
-                    .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
+                if arg.is_empty() {
+                    None
+                } else {
+                    Some(
+                        arg.parse()
+                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
+                    )
+                }
             )),
             "swpn" => toks.push(Op::Swpn(
                 arg.parse()
