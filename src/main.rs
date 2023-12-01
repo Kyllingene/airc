@@ -46,7 +46,9 @@ impl Display for CompError {
             CompError::RequiresArg(i, op) => {
                 write!(f, "Operator `{op}` on line {i} requires an argument")
             }
-            CompError::InvalidMacro(i, name) => write!(f, "Invalid macro name on line {i}: `{name}`"),
+            CompError::InvalidMacro(i, name) => {
+                write!(f, "Invalid macro name on line {i}: `{name}`")
+            }
             CompError::UnbalancedIfs => write!(f, "Unequal numbers of `if` and `endif`"),
             CompError::UnbalancedLoops => write!(f, "Unequal numbers of `loop` and `end`"),
         }
@@ -109,6 +111,12 @@ enum Op {
     // stack
     /// Push a value onto the stack.
     Push(u8),
+
+    /// Push a string onto the stack, with its length.
+    Str(String),
+    
+    /// Push a null-terminated string onto the stack.
+    CStr(String),
 
     /// Set the current stack value.
     Set(u8),
@@ -268,6 +276,16 @@ impl Display for Op {
                 }
             ),
             Op::Push(arg) => ss!(">>>+>") + &Op::Set(*arg).to_string(),
+            Op::Str(string) => string.chars()
+                .rev()
+                .map(|ch| Op::Push(ch as u8).to_string())
+                .chain(Some(Op::Push(string.len() as u8 + 1).to_string()))
+                .collect(),
+            Op::CStr(string) => string.chars()
+                .chain(Some('\0'))
+                .rev()
+                .map(|ch| Op::Push(ch as u8).to_string())
+                .collect(),
             Op::Set(arg) => ss!("[-]") + &"+".repeat(*arg as usize),
             Op::Pop(arg) => "[-]<-<<<".repeat(*arg as usize),
             Op::Dup(arg) => ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize),
@@ -367,7 +385,11 @@ fn tokenize(code: &str) -> CompResult<String> {
     for (i, line) in code.lines().enumerate() {
         let mut line = line.trim();
 
-        let toks = if macro_name.is_some() { &mut mac } else { &mut program };
+        let toks = if macro_name.is_some() {
+            &mut mac
+        } else {
+            &mut program
+        };
 
         if line.starts_with(';') || line.is_empty() || line.chars().all(|ch| ch.is_whitespace()) {
             continue;
@@ -407,7 +429,7 @@ fn tokenize(code: &str) -> CompResult<String> {
         arg = arg.trim();
 
         let fmt;
-        if let Some(Some(ch)) = arg.strip_prefix('\'').map(|s| s.strip_suffix('\'')) {
+        if let Some(ch) = arg.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
             if ch.len() != 1 && ch != "\\n" {
                 return Err(CompError::InvalidChar(i, arg.to_string()));
             }
@@ -418,7 +440,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                 fmt = format!("{}", ch.as_bytes()[0]);
                 arg = &fmt;
             }
-        } else if let Some(Some(string)) = arg.strip_prefix('"').map(|s| s.strip_suffix('"')) {
+        } else if let Some(string) = arg.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
             fmt = string.replace("\\n", "\n");
             arg = &fmt;
         } else if arg.contains('\'') {
@@ -520,6 +542,8 @@ fn tokenize(code: &str) -> CompResult<String> {
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
             )),
+            "str" => toks.push(Op::Str(arg.to_string())),
+            "cstr" => toks.push(Op::CStr(arg.to_string())),
             "set" => toks.push(Op::Set(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
@@ -537,16 +561,14 @@ fn tokenize(code: &str) -> CompResult<String> {
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?
             })),
             "swp" => toks.push(Op::Swp),
-            "swpb" => toks.push(Op::Swpb(
-                if arg.is_empty() {
-                    None
-                } else {
-                    Some(
-                        arg.parse()
-                            .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
-                    )
-                }
-            )),
+            "swpb" => toks.push(Op::Swpb(if arg.is_empty() {
+                None
+            } else {
+                Some(
+                    arg.parse()
+                        .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
+                )
+            })),
             "swpn" => toks.push(Op::Swpn(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
@@ -614,7 +636,9 @@ fn tokenize(code: &str) -> CompResult<String> {
                 macro_name = Some(arg);
             }
             "endef" => {
-                let name = macro_name.take().expect("Internal error: no name for macro");
+                let name = macro_name
+                    .take()
+                    .expect("Internal error: no name for macro");
                 let new = std::mem::take(&mut mac);
                 macros.insert(name, Op::Macro(new));
             }
