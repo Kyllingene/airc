@@ -279,7 +279,7 @@ impl Display for Op {
             Op::Str(string) => string.chars()
                 .rev()
                 .map(|ch| Op::Push(ch as u8).to_string())
-                .chain(Some(Op::Push(string.len() as u8 + 1).to_string()))
+                .chain(Some(Op::Push(string.len() as u8).to_string()))
                 .collect(),
             Op::CStr(string) => string.chars()
                 .chain(Some('\0'))
