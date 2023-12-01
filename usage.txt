@@ -17,3 +17,4 @@ Options:
     -o | --output : Specifify an output file. You
                     may specifiy more than one by
                     separating them with commas.
+    -s | --stdout : print compiled code to stdout

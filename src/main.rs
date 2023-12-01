@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
 use std::fs::{read_to_string, File};
-use std::io::Write;
-use std::path::Path;
+use std::io::{Read, Write};
 use std::process::exit;
 
 use sarge::prelude::*;
@@ -25,6 +24,8 @@ macro_rules! ss {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
+#[non_exhaustive]
 enum CompError {
     InvalidOp(usize, String),
     InvalidChar(usize, String),
@@ -665,8 +666,8 @@ sarge! {
     Args,
 
     'h' help: bool,
+    's' stdout: bool,
     #ok 'o' output: String,
-    #ok 's' stdout: String,
 }
 
 fn main() {
@@ -682,7 +683,7 @@ fn main() {
         return;
     }
 
-    if args.stdout.is_some() && args.output.is_some() {
+    if args.stdout && args.output.is_some() {
         print_err(
             "invalid options",
             "you may only specifiy one of --output or --stdout",
@@ -695,53 +696,60 @@ fn main() {
         exit(1);
     }
 
-    let mut output_files = args.output
-        .map(|v| v.split(',').map(String::from).collect::<Vec<_>>());
+    let output_files = args.output
+        .map(|v| v.split(',').map(String::from).collect::<Vec<_>>())
+        .unwrap_or_else(|| vec!["out.bf".to_string()]);
 
-    if args.stdout.is_none() && output_files.is_none() {
-        output_files = Some(
-            input
-                .iter()
-                .map(|file| {
-                    Path::new(file)
-                        .with_extension("bf")
-                        .to_str()
-                        .unwrap()
-                        .to_string()
-                })
-                .to_owned()
-                .collect(),
+    if output_files.len() != input.len() && output_files.len() != 1 {
+        print_err(
+            "invalid arguments",
+            "must have equal amounts of input and output files, or 1 output file",
         );
     }
 
-    if let Some(output_files) = &output_files {
-        if output_files.len() != input.len() && output_files.len() != 1 {
-            print_err(
-                "invalid arguments",
-                "must have equal amounts of input and output files, or 1 output file",
-            );
-        }
-    }
-
     let mut compiled = Vec::new();
-    for file in input {
-        let code = match read_to_string(&file) {
-            Ok(c) => c,
-            Err(e) => {
-                print_err(format!("failed to read file {file}"), e);
-            }
-        };
+    if output_files.len() != 1 {
+        for file in input {
+            let code = match read_to_string(&file) {
+                Ok(c) => c,
+                Err(e) => {
+                    print_err(format!("failed to read file {file}"), e);
+                }
+            };
 
-        print_warn(format!("compiling {}", file));
+            print_warn(format!("compiling {}", file));
+            compiled.push(match tokenize(&code) {
+                Ok(c) => c,
+                Err(e) => {
+                    print_err(format!("failed to parse file {file}"), e);
+                }
+            });
+        }
+    } else {
+        let mut code = String::new();
+        for filename in input {
+            match File::open(&filename) {
+                Ok(mut file) => {
+                    if let Err(e) = file.read_to_string(&mut code) {
+                        print_err("failed to read file {filename}", e);
+                    }
+                }
+                Err(e) => {
+                    print_err(format!("failed to open file {filename}"), e);
+                }
+            }
+        }
+
+        print_warn("compiling all files");
         compiled.push(match tokenize(&code) {
             Ok(c) => c,
             Err(e) => {
-                print_err(format!("failed to parse file {file}"), e);
+                print_err("failed to parse files", e);
             }
         });
     }
 
-    if let Some(output_files) = output_files {
+    if !args.stdout {
         if output_files.len() == 1 {
             print_warn(format!("writing to {}", output_files[0]));
             let mut file = match File::create(&output_files[0]) {
@@ -759,7 +767,7 @@ fn main() {
         } else {
             for (i, filename) in output_files.iter().enumerate() {
                 print_warn(format!("writing to {}", filename));
-                let mut file = match File::create(&output_files[0]) {
+                let mut file = match File::create(filename) {
                     Ok(f) => f,
                     Err(e) => {
                         print_err("failed to open output file", e);
