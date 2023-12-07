@@ -2,9 +2,9 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
-use std::path::Path;
 use std::fs::{read_to_string, File};
 use std::io::{Read, Write};
+use std::path::Path;
 use std::process::exit;
 
 use sarge::prelude::*;
@@ -116,7 +116,7 @@ enum Op {
 
     /// Push a string onto the stack, with its length.
     Str(String),
-    
+
     /// Push a null-terminated string onto the stack.
     CStr(String),
 
@@ -257,11 +257,12 @@ impl Display for Op {
                 },
             ),
             Op::Not(arg) => format!(
-                "{}>[-]<-[>-<-]>[<+>-]<",
+                "{}{}",
                 match arg {
                     Some(arg) => Op::Push(*arg).to_string(),
                     None => ss!(),
-                }
+                },
+                "+".repeat(244),
             ),
             Op::And(arg) => format!(
                 "{}>[-]<<<<<[>>>>[>+<-]<<<<-]>>>>[-]>[-<<<<<+>>>>>]<<-<<<",
@@ -294,14 +295,74 @@ impl Display for Op {
             Op::Swp => ss!(">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
             Op::Rot => format!("<<<<{}>>>>{}", Op::Swp, Op::Swp),
             Op::Swpb(i) => if let Some(i) = i {
-                    format!(
-                    "[->+<]{0}[-{1}+{0}]{1}>[-{0}<+{1}>]<",
+                format!(
+                    ">[-]<[->+<]{0}[-{1}+{0}]{1}>[-{0}<+{1}>]<",
                     "<".repeat(i * 4),
                     ">".repeat(i * 4),
                 )
             } else {
                 ss!(
-                    "<->[->+<]>[-<<<<[-]>>>>[-<<<<+>>>>]<<<<]<<->[->+>>[>>>>]>+<<<<<[<<<<]>]>[-<+>]<<+>>>>[>>>>]+>"
+                    "
+                        src = cell back n
+                        dest = cell back 1
+                        n = top cell holding n
+
+                        at n val
+
+                        unset bits
+                        <-<<<<-
+                        at dest bit
+
+                        move dest val to n temp
+                        >[->>>>>+<<<<<]
+                        at dest val
+
+                        move n val into dest temp
+                        >>>>[-<<<+>>>]
+                        at n val
+
+                        find src
+                        <<<[-<<<<[-]>>>>[-<<<<+>>>>]<<<<]
+                        at src temp
+
+                        unset bit
+                        <<-
+                        at src bit
+
+                        move src to dest
+                        >[-
+                            goto dest
+                            >>>[>>>>]>+
+
+                            goto src
+                            <<<<<[<<<<]>
+                        ]
+                        at src val
+
+                        goto dest
+                        >>>[>>>>]
+                        at dest bit
+
+                        move n temp to src
+                        >>>>>>[-
+                            goto src
+                            <<<<<<[<<<<]>+
+                            at src val
+
+                            goto n temp
+                            >>>[>>>>]>>>>>>
+                        ]
+                        at n temp
+
+                        goto src
+                        <<<<<<[<<<<]
+
+                        reset bit and goto dest
+                        +[>>>>]
+
+                        reset bit
+                        +>
+                    "
                 )
             },
             Op::Swpn(n) => format!(
@@ -309,15 +370,15 @@ impl Display for Op {
                 goto(*n),
                 goback()
             ),
-            Op::Tag(i) => if let Some(i) = i { format!(">>{}<<", Op::Set(*i)) } else { ss!("[->+>+<<]>[-<+>]<") },
-            Op::Ctg(i) => format!("<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>", goto_tag(*i), goback()),
+            Op::Tag(i) => if let Some(i) = i { format!(">>[-]{}<<", "+".repeat(*i as usize)) } else { ss!("[->+>+<<]>[-<+>]<") },
+            Op::Ctg(i) => format!("<->>[-]<{0}[->+<{1}+{0}]>[-<+>]<{1}<+>", goto_tag(*i), goback()),
             Op::Mtg(i) => format!("{0}[-]{1}[-{0}+{1}]<-<<<", goto_tag(*i), goback()),
             Op::Ptg => ss!(">>[->>>+>+<<<<]>>>"),
             Op::If => ss!(">[-]<["),
             Op::Ifn => Op::Not(None).to_string() + &Op::If.to_string(),
             Op::Endif => ss!(">[-]<[->+<]]>[-<+>]<"),
-            Op::Loop => format!("[{}", Op::Pop(1)),
-            Op::End => format!("]{}", Op::Pop(1)),
+            Op::Loop => ss!("[[-]<-<<<"),
+            Op::End => ss!("]<-<<<"),
             Op::Out(arg) => match arg {
                     Some(arg) => format!(">[-]{}.<", "+".repeat(*arg as usize)),
                     None => ss!("."),
@@ -593,11 +654,11 @@ fn tokenize(code: &str) -> CompResult<String> {
             )),
             "ptg" => toks.push(Op::Ptg),
             "rot" => toks.push(Op::Rot),
-            "if" | "{" => toks.push(Op::If),
-            "ifn" | "!{" => toks.push(Op::Ifn),
-            "endif" | "}" => toks.push(Op::Endif),
-            "loop" | "[" => toks.push(Op::Loop),
-            "end" | "]" => toks.push(Op::End),
+            "if" => toks.push(Op::If),
+            "ifn" => toks.push(Op::Ifn),
+            "endif" => toks.push(Op::Endif),
+            "loop" => toks.push(Op::Loop),
+            "end" => toks.push(Op::End),
             "out" => toks.push(Op::Out(if arg.is_empty() {
                 None
             } else {
@@ -698,12 +759,16 @@ fn main() {
     }
 
     let default_name = if input.len() == 1 {
-        Path::new(&input[0]).with_extension("bf").display().to_string()
+        Path::new(&input[0])
+            .with_extension("bf")
+            .display()
+            .to_string()
     } else {
         "out.bf".to_string()
     };
 
-    let output_files = args.output
+    let output_files = args
+        .output
         .map(|v| v.split(',').map(String::from).collect::<Vec<_>>())
         .unwrap_or_else(|| vec![default_name]);
 
