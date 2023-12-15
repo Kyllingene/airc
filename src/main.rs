@@ -1,6 +1,6 @@
-// TODO: support more kinds of brain* interpreters
+#![feature(trait_alias)]
+
 use std::collections::HashMap;
-use std::error::Error;
 use std::fmt::Display;
 use std::fs::{read_to_string, File};
 use std::io::{Read, Write};
@@ -9,10 +9,12 @@ use std::process::exit;
 
 use sarge::prelude::*;
 
-// TODO: implement pact
-// mod pact;
+// TODO: support more kinds of brain* interpreters
 
-type CompResult<T> = Result<T, CompError>;
+// mod parse;
+mod error;
+
+use error::{CompError, CompResult};
 
 macro_rules! ss {
     ($s:expr) => {
@@ -23,41 +25,6 @@ macro_rules! ss {
         String::new()
     };
 }
-
-#[derive(Debug, Clone)]
-#[allow(unused)]
-#[non_exhaustive]
-enum CompError {
-    InvalidOp(usize, String),
-    InvalidChar(usize, String),
-    InvalidString(usize, String),
-    InvalidArgument(usize, String),
-    InvalidMacro(usize, String),
-    RequiresArg(usize, String),
-    UnbalancedIfs,
-    UnbalancedLoops,
-}
-
-impl Display for CompError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompError::InvalidOp(i, op) => write!(f, "Invalid op on line {i}: `{op}`"),
-            CompError::InvalidChar(i, ch) => write!(f, "Invalid character on line {i}: `{ch}`"),
-            CompError::InvalidString(i, ch) => write!(f, "Invalid string on line {i}: `{ch}`"),
-            CompError::InvalidArgument(i, ch) => write!(f, "Invalid argument on line {i}: `{ch}`"),
-            CompError::RequiresArg(i, op) => {
-                write!(f, "Operator `{op}` on line {i} requires an argument")
-            }
-            CompError::InvalidMacro(i, name) => {
-                write!(f, "Invalid macro name on line {i}: `{name}`")
-            }
-            CompError::UnbalancedIfs => write!(f, "Unequal numbers of `if` and `endif`"),
-            CompError::UnbalancedLoops => write!(f, "Unequal numbers of `loop` and `end`"),
-        }
-    }
-}
-
-impl Error for CompError {}
 
 #[inline]
 fn goto(n: usize) -> String {
@@ -79,7 +46,7 @@ fn goback() -> String {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Op {
+enum Instruction {
     // math
     /// Push pop + pop.
     Add(Option<u8>),
@@ -154,13 +121,11 @@ enum Op {
     /// Retrieve the tag of the top cell and push it.
     Ptg,
 
+    // flow control
     /// Run code between here and endif if top != 0.
     If,
 
-    // flow control
     // TODO: add some sort of pre-/post-processing to allow more complex flow control
-    /// Run code between here and endif if top == 0.
-    Ifn,
     /// Close an if statement
     Endif,
 
@@ -184,43 +149,43 @@ enum Op {
     Raw(String),
 
     /// A macro
-    Macro(Vec<Op>),
+    Macro(Vec<Instruction>),
 }
 
-impl Display for Op {
+impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let data = match self {
-            Op::Add(arg) => if let Some(arg) = arg {
+            Instruction::Add(arg) => if let Some(arg) = arg {
                 "+".repeat(*arg as usize)
             } else {
                 ss!("[-<<<<+>>>>]<-<<<")
             }
-            Op::Sub(arg) => if let Some(arg) = arg {
+            Instruction::Sub(arg) => if let Some(arg) = arg {
                 "-".repeat(*arg as usize)
             } else {
                 ss!("[-<<<<->>>>]<-<<<")
             }
-            Op::Mul(arg) => format!(
+            Instruction::Mul(arg) => format!(
                 "{}>[-]<<<<[-]<[>>>>>+<<<<<-]>>>>>[<[<<<<+>+>>>-]<<<[>>>+<<<-]>>>>-]<[-]<-<<<",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 }
             ),
-            Op::Div(arg) => format!("{}>[-]<<-<<[-]<<->[>+<-]>[>>>[<<<<<+>>>>>>+<-]>[<+>-]<<<<<<[>>>>>>+<<<<-[>>>>[-]<<+<<-]>>[<<+>>-]>>[<<<<<<-[>-<[-]]+>>>>>>-]<<<<<<-]>+>]<<[-]+>>>>[-]>[-]<<<<",
+            Instruction::Div(arg) => format!("{}>[-]<<-<<[-]<<->[>+<-]>[>>>[<<<<<+>>>>>>+<-]>[<+>-]<<<<<<[>>>>>>+<<<<-[>>>>[-]<<+<<-]>>[<<+>>-]>>[<<<<<<-[>-<[-]]+>>>>>>-]<<<<<<-]>+>]<<[-]+>>>>[-]>[-]<<<<",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 }
             ),
-            Op::Eq(arg) => format!("{}<<<<[->>>>-<<<<]+>>>>[<<<<->>>>[-]]<-<<<", match arg {
-                Some(arg) => Op::Push(*arg).to_string(),
+            Instruction::Eq(arg) => format!("{}<<<<[->>>>-<<<<]+>>>>[<<<<->>>>[-]]<-<<<", match arg {
+                Some(arg) => Instruction::Push(*arg).to_string(),
                 None => ss!(),
             }),
-            Op::Neq(arg) => format!(
+            Instruction::Neq(arg) => format!(
                 "{}<<<[-]>>>>[-]<<<<<[>>>>>+<<<<<-]>>>>[>-<<<<+>>>-]<<<[>>>+<<<-]>>>>[<<<<<+>>>>>[-]]<<-<<<",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 }
             ),
@@ -234,7 +199,7 @@ impl Display for Op {
 
                 ux< [- x> + ux< ]+ x>
             */
-            Op::Gt(arg) => format!(
+            Instruction::Gt(arg) => format!(
                 "{}ty> [-] tx<<<< [-] ux<< -
                 x> [tx> +
                     y>>> [- tx<<< [-] ty>>>> + y<]
@@ -244,57 +209,57 @@ impl Display for Op {
 
                 ux< [- x> + ux< ]+ x>",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 }
             ),
 
-            Op::Lt(arg) => format!(
+            Instruction::Lt(arg) => format!(
                 "{}>[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>][-]<<<<[-]<<[-]>[>+>>>[-<<<[-]>>>>+<]<<<[-<<+>>]>>>>[-<+>]<-<<<<-]<[->+<]+>",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 },
             ),
-            Op::Not(arg) => format!(
+            Instruction::Not(arg) => format!(
                 "{}{}",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 },
                 "+".repeat(244),
             ),
-            Op::And(arg) => format!(
+            Instruction::And(arg) => format!(
                 "{}>[-]<<<<<[>>>>[>+<-]<<<<-]>>>>[-]>[-<<<<<+>>>>>]<<-<<<",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 }
             ),
-            Op::Or(arg) => format!(
+            Instruction::Or(arg) => format!(
                 "{}[<<<<[>+<[-]]>>>>[-]][-]<-<<<[-]>[-<+>]<",
                 match arg {
-                    Some(arg) => Op::Push(*arg).to_string(),
+                    Some(arg) => Instruction::Push(*arg).to_string(),
                     None => ss!(),
                 }
             ),
-            Op::Push(arg) => ss!(">>>+>") + &Op::Set(*arg).to_string(),
-            Op::Str(string) => string.chars()
+            Instruction::Push(arg) => ss!(">>>+>") + &Instruction::Set(*arg).to_string(),
+            Instruction::Str(string) => string.chars()
                 .rev()
-                .map(|ch| Op::Push(ch as u8).to_string())
-                .chain(Some(Op::Push(string.len() as u8).to_string()))
+                .map(|ch| Instruction::Push(ch as u8).to_string())
+                .chain(Some(Instruction::Push(string.len() as u8).to_string()))
                 .collect(),
-            Op::CStr(string) => string.chars()
+            Instruction::CStr(string) => string.chars()
                 .chain(Some('\0'))
                 .rev()
-                .map(|ch| Op::Push(ch as u8).to_string())
+                .map(|ch| Instruction::Push(ch as u8).to_string())
                 .collect(),
-            Op::Set(arg) => ss!("[-]") + &"+".repeat(*arg as usize),
-            Op::Pop(arg) => "[-]<-<<<".repeat(*arg as usize),
-            Op::Dup(arg) => ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize),
-            Op::Swp => ss!(">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
-            Op::Rot => format!("<<<<{}>>>>{}", Op::Swp, Op::Swp),
-            Op::Swpb(i) => if let Some(i) = i {
+            Instruction::Set(arg) => ss!("[-]") + &"+".repeat(*arg as usize),
+            Instruction::Pop(arg) => "[-]<-<<<".repeat(*arg as usize),
+            Instruction::Dup(arg) => ">[-]>>+>[-]<<<<[->+>>>+<<<<]>[-<+>]>>>".repeat(*arg as usize),
+            Instruction::Swp => ss!(">[-]<[->+<]<<<<[->>>>+<<<<]>>>>>[-<<<<<+>>>>>]<"),
+            Instruction::Rot => format!("<<<<{}>>>>{}", Instruction::Swp, Instruction::Swp),
+            Instruction::Swpb(i) => if let Some(i) = i {
                 format!(
                     ">[-]<[->+<]{0}[-{1}+{0}]{1}>[-{0}<+{1}>]<",
                     "<".repeat(i * 4),
@@ -302,94 +267,33 @@ impl Display for Op {
                 )
             } else {
                 ss!(
-                    "
-                        src = cell back n
-                        dest = cell back 1
-                        n = top cell holding n
-
-                        at n val
-
-                        unset bits
-                        <-<<<<-
-                        at dest bit
-
-                        move dest val to n temp
-                        >[->>>>>+<<<<<]
-                        at dest val
-
-                        move n val into dest temp
-                        >>>>[-<<<+>>>]
-                        at n val
-
-                        find src
-                        <<<[-<<<<[-]>>>>[-<<<<+>>>>]<<<<]
-                        at src temp
-
-                        unset bit
-                        <<-
-                        at src bit
-
-                        move src to dest
-                        >[-
-                            goto dest
-                            >>>[>>>>]>+
-
-                            goto src
-                            <<<<<[<<<<]>
-                        ]
-                        at src val
-
-                        goto dest
-                        >>>[>>>>]
-                        at dest bit
-
-                        move n temp to src
-                        >>>>>>[-
-                            goto src
-                            <<<<<<[<<<<]>+
-                            at src val
-
-                            goto n temp
-                            >>>[>>>>]>>>>>>
-                        ]
-                        at n temp
-
-                        goto src
-                        <<<<<<[<<<<]
-
-                        reset bit and goto dest
-                        +[>>>>]
-
-                        reset bit
-                        +>
-                    "
+                    ">[-]<<-<<<<->[->>>>>+<<<<<]>[-]>>>[-<<<+>>>]<<<[-[-<<<<+>>>>]<<<<]<<->[->>>[>>>>]>+<<<<<[<<<<]>];>>>[>>>>]+>>>>>>[-<<<<<<[<<<<]>+>>>[>>>>]>>]<<<<<<[<<<<]+[>>>>]<<<"
                 )
             },
-            Op::Swpn(n) => format!(
+            Instruction::Swpn(n) => format!(
                 "<->>[-]<[->+<]{0}[-{1}+{0}]{1}>[-<{0}+{1}>]<<+>",
                 goto(*n),
                 goback()
             ),
-            Op::Tag(i) => if let Some(i) = i { format!(">>[-]{}<<", "+".repeat(*i as usize)) } else { ss!("[->+>+<<]>[-<+>]<") },
-            Op::Ctg(i) => format!("<->>[-]<{0}[->+<{1}+{0}]>[-<+>]<{1}<+>", goto_tag(*i), goback()),
-            Op::Mtg(i) => format!("{0}[-]{1}[-{0}+{1}]<-<<<", goto_tag(*i), goback()),
-            Op::Ptg => ss!(">>[->>>+>+<<<<]>>>"),
-            Op::If => ss!(">[-]<["),
-            Op::Ifn => Op::Not(None).to_string() + &Op::If.to_string(),
-            Op::Endif => ss!(">[-]<[->+<]]>[-<+>]<"),
-            Op::Loop => ss!("[[-]<-<<<"),
-            Op::End => ss!("]<-<<<"),
-            Op::Out(arg) => match arg {
+            Instruction::Tag(i) => if let Some(i) = i { format!(">>[-]{}<<", "+".repeat(*i as usize)) } else { ss!("[->+>+<<]>[-<+>]<") },
+            Instruction::Ctg(i) => format!("<->>[-]<{0}[->+<{1}+{0}]>[-<+>]<{1}<+>", goto_tag(*i), goback()),
+            Instruction::Mtg(i) => format!("{0}[-]{1}[-{0}+{1}]<-<<<", goto_tag(*i), goback()),
+            Instruction::Ptg => ss!(">>[->>>+>+<<<<]>>>"),
+            Instruction::If => ss!(">[-]<["),
+            Instruction::Endif => ss!(">[-]<[->+<]]>[-<+>]<"),
+            Instruction::Loop => ss!("["),
+            Instruction::End => ss!("]"),
+            Instruction::Out(arg) => match arg {
                     Some(arg) => format!(">[-]{}.<", "+".repeat(*arg as usize)),
                     None => ss!("."),
                 }
-            Op::Pout(arg) => match arg {
+            Instruction::Pout(arg) => match arg {
                     Some(arg) => format!(">[-]{}.<", "+".repeat(*arg as usize)),
                     None => ss!(".[-]<-<<<"),
                 }
-            Op::In => ss!(">>>+>[-],"),
-            Op::Raw(code) => code.clone(),
-            Op::Macro(ops) => ops.iter()
+            Instruction::In => ss!(">>>+>[-],"),
+            Instruction::Raw(code) => code.clone(),
+            Instruction::Macro(ops) => ops.iter()
                     .flat_map(|op| op.to_string().chars().collect::<Vec<_>>())
                     .collect(),
         };
@@ -398,18 +302,21 @@ impl Display for Op {
     }
 }
 
-fn compile(tokens: &[Op]) -> CompResult<String> {
-    if tokens.iter().filter(|op| **op == Op::Loop).count()
-        != tokens.iter().filter(|op| **op == Op::End).count()
+fn compile(tokens: &[Instruction]) -> CompResult<String> {
+    if tokens.iter().filter(|op| **op == Instruction::Loop).count()
+        != tokens.iter().filter(|op| **op == Instruction::End).count()
     {
         return Err(CompError::UnbalancedLoops);
     }
 
     if tokens
         .iter()
-        .filter(|op| matches!(op, Op::If | Op::Ifn))
+        .filter(|op| matches!(op, Instruction::If))
         .count()
-        != tokens.iter().filter(|op| matches!(op, Op::Endif)).count()
+        != tokens
+            .iter()
+            .filter(|op| matches!(op, Instruction::Endif))
+            .count()
     {
         return Err(CompError::UnbalancedIfs);
     }
@@ -513,7 +420,7 @@ fn tokenize(code: &str) -> CompResult<String> {
         }
 
         match op.as_str() {
-            "add" => toks.push(Op::Add(if arg.is_empty() {
+            "add" => toks.push(Instruction::Add(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -521,7 +428,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "sub" => toks.push(Op::Sub(if arg.is_empty() {
+            "sub" => toks.push(Instruction::Sub(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -529,7 +436,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "mul" => toks.push(Op::Mul(if arg.is_empty() {
+            "mul" => toks.push(Instruction::Mul(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -537,7 +444,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "div" => toks.push(Op::Div(if arg.is_empty() {
+            "div" => toks.push(Instruction::Div(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -545,7 +452,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "eq" => toks.push(Op::Eq(if arg.is_empty() {
+            "eq" => toks.push(Instruction::Eq(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -553,7 +460,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "neq" => toks.push(Op::Neq(if arg.is_empty() {
+            "neq" => toks.push(Instruction::Neq(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -561,7 +468,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "gt" => toks.push(Op::Gt(if arg.is_empty() {
+            "gt" => toks.push(Instruction::Gt(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -569,7 +476,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "lt" => toks.push(Op::Lt(if arg.is_empty() {
+            "lt" => toks.push(Instruction::Lt(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -577,7 +484,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "not" => toks.push(Op::Not(if arg.is_empty() {
+            "not" => toks.push(Instruction::Not(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -585,7 +492,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "and" => toks.push(Op::And(if arg.is_empty() {
+            "and" => toks.push(Instruction::And(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -593,7 +500,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "or" => toks.push(Op::Or(if arg.is_empty() {
+            "or" => toks.push(Instruction::Or(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -601,30 +508,30 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "push" => toks.push(Op::Push(
+            "push" => toks.push(Instruction::Push(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
             )),
-            "str" => toks.push(Op::Str(arg.to_string())),
-            "cstr" => toks.push(Op::CStr(arg.to_string())),
-            "set" => toks.push(Op::Set(
+            "str" => toks.push(Instruction::Str(arg.to_string())),
+            "cstr" => toks.push(Instruction::CStr(arg.to_string())),
+            "set" => toks.push(Instruction::Set(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
             )),
-            "pop" => toks.push(Op::Pop(if arg.is_empty() {
+            "pop" => toks.push(Instruction::Pop(if arg.is_empty() {
                 1
             } else {
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?
             })),
-            "dup" => toks.push(Op::Dup(if arg.is_empty() {
+            "dup" => toks.push(Instruction::Dup(if arg.is_empty() {
                 1
             } else {
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?
             })),
-            "swp" => toks.push(Op::Swp),
-            "swpb" => toks.push(Op::Swpb(if arg.is_empty() {
+            "swp" => toks.push(Instruction::Swp),
+            "swpb" => toks.push(Instruction::Swpb(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -632,11 +539,11 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "swpn" => toks.push(Op::Swpn(
+            "swpn" => toks.push(Instruction::Swpn(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
             )),
-            "tag" => toks.push(Op::Tag(if arg.is_empty() {
+            "tag" => toks.push(Instruction::Tag(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -644,22 +551,21 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "ctg" => toks.push(Op::Ctg(
+            "ctg" => toks.push(Instruction::Ctg(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
             )),
-            "mtg" => toks.push(Op::Mtg(
+            "mtg" => toks.push(Instruction::Mtg(
                 arg.parse()
                     .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
             )),
-            "ptg" => toks.push(Op::Ptg),
-            "rot" => toks.push(Op::Rot),
-            "if" => toks.push(Op::If),
-            "ifn" => toks.push(Op::Ifn),
-            "endif" => toks.push(Op::Endif),
-            "loop" => toks.push(Op::Loop),
-            "end" => toks.push(Op::End),
-            "out" => toks.push(Op::Out(if arg.is_empty() {
+            "ptg" => toks.push(Instruction::Ptg),
+            "rot" => toks.push(Instruction::Rot),
+            "if" => toks.push(Instruction::If),
+            "endif" => toks.push(Instruction::Endif),
+            "loop" => toks.push(Instruction::Loop),
+            "end" => toks.push(Instruction::End),
+            "out" => toks.push(Instruction::Out(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -667,7 +573,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "pout" => toks.push(Op::Pout(if arg.is_empty() {
+            "pout" => toks.push(Instruction::Pout(if arg.is_empty() {
                 None
             } else {
                 Some(
@@ -675,8 +581,8 @@ fn tokenize(code: &str) -> CompResult<String> {
                         .map_err(|_| CompError::InvalidArgument(i, arg.to_owned()))?,
                 )
             })),
-            "in" => toks.push(Op::In),
-            "raw" => toks.push(Op::Raw(arg.to_owned())),
+            "in" => toks.push(Instruction::In),
+            "raw" => toks.push(Instruction::Raw(arg.to_owned())),
 
             "def" => {
                 let arg = arg.to_string();
@@ -690,7 +596,7 @@ fn tokenize(code: &str) -> CompResult<String> {
                     .take()
                     .expect("Internal error: no name for macro");
                 let new = std::mem::take(&mut mac);
-                macros.insert(name, Op::Macro(new));
+                macros.insert(name, Instruction::Macro(new));
             }
 
             op => {
